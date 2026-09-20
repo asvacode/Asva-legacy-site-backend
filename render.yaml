@@ -18,3 +18,5 @@ services:
         value: https://asva-legacy-site-frontend.vercel.app
       - key: DJANGO_DEBUG
         value: false
+      - key: RENDER_EXTERNAL_HOSTNAME
+        sync: false
