@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "accounts",
     "payments",
     "cms.apps.CmsConfig",
+    "phonenumber_field"
 ]
 
 MIDDLEWARE = [
@@ -213,3 +214,8 @@ UNFOLD = {
         },
     }
 }
+
+
+# django_phonenumber_field settings...
+PHONENUMBER_DEFAULT_REGION = "NG"
+PHONENUMBER_DEAFULT_FORMAT= "E164"
