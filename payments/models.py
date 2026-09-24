@@ -22,6 +22,35 @@ class PaymentClaim(models.Model):
         return f"{self.reference_code} - {self.amount} ({self.status})"
 
 
+class Payment(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        COMPLETED = "COMPLETED", "Completed"
+        FAILED = "FAILED", "Failed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class PaymentType(models.TextChoices):
+        CARD = "CARD", "Card"
+        BANK_TRANSFER = "BANK_TRANSFER", "Bank transfer"
+        USSD = "USSD", "USSD"
+        MOBILE_MONEY = "MOBILE_MONEY", "Mobile money"
+        OTHER = "OTHER", "Other"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payments")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=3, default="NGN")
+    status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING, db_index=True)
+    payment_type = models.CharField(max_length=32, choices=PaymentType.choices)
+    paystack_reference = models.CharField(max_length=128, unique=True, db_index=True)
+    paystack_access_code = models.CharField(max_length=128, blank=True)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.paystack_reference} - {self.amount} {self.currency} ({self.status})"
+
+
 class AdminNotification(models.Model):
     class Type(models.TextChoices):
         PAYMENT_CLAIM_SUBMITTED = "PAYMENT_CLAIM_SUBMITTED", "Payment claim submitted"

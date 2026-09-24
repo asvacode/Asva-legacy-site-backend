@@ -219,3 +219,8 @@ UNFOLD = {
 # django_phonenumber_field settings...
 PHONENUMBER_DEFAULT_REGION = "NG"
 PHONENUMBER_DEAFULT_FORMAT= "E164"
+
+
+# Paystack
+PAYSTACK_SECRET_KEY = os.environ.get('PAYSTACK_SECRET_KEY')
+PAYSTACK_PUBLIC_KEY = os.environ.get('PAYSTACK_PUBLIC_KEY')

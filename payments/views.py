@@ -1,10 +1,16 @@
+from decimal import Decimal, InvalidOperation
+
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
+import requests
+from asva_backend.settings import PAYSTACK_SECRET_KEY
 from rest_framework.response import Response
+from django.contrib.auth.models import User
 from rest_framework.views import APIView
 
-from .models import AdminNotification, PaymentClaim
+from .models import AdminNotification, Payment, PaymentClaim
 from .serializers import AdminNotificationSerializer, PaymentClaimCreateSerializer, PaymentClaimListSerializer
+from .utils import translate_payment_channel
 
 
 class CreatePaymentClaimView(generics.CreateAPIView):
@@ -92,3 +98,94 @@ class AdminNotificationReadView(APIView):
         notification.is_read = True
         notification.save(update_fields=["is_read"])
         return Response(status=status.HTTP_200_OK)
+    
+    
+class InitiatePaystackPayment(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        email = request.data.get("email") or (request.user.email if request.user.is_authenticated else None)
+        amount = request.data.get("amount")
+        if not email or amount is None:
+            return Response({"detail": "Email and amount are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            amount_decimal = Decimal(str(amount))
+        except InvalidOperation:
+            return Response({"detail": "Invalid amount."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if amount_decimal <= 0:
+            return Response({"detail": "Amount must be greater than zero."}, status=status.HTTP_400_BAD_REQUEST)
+
+        payment_channel = request.data.get("payment_channel")
+        
+        payment_type = translate_payment_channel(payment_channel)
+
+        if payment_type not in {choice[0] for choice in Payment.PaymentType.choices}:
+            return Response({"detail": "Invalid payment type."}, status=status.HTTP_400_BAD_REQUEST)
+
+        payload = {
+            "email": email,
+            "amount": int((amount_decimal * 100).quantize(Decimal("1"))),
+            "currency": "NGN",
+            "channel": payment_channel,
+            "metadata": {
+                "user_id": request.user.id if request.user.is_authenticated else None,
+                "description": request.data.get("description", "Payment"),
+                "payment_type": payment_type,
+            },
+        }
+
+        try:
+            response = requests.post(
+                "https://api.paystack.co/transaction/initialize",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
+                    "Content-Type": "application/json",
+                },
+                timeout=20,
+            )
+            response_data = response.json()
+        except (requests.RequestException, ValueError):
+            return Response({"detail": "Payment initialization failed."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if response.status_code != 200 or not response_data.get("status"):
+            return Response(
+                {"detail": response_data.get("message", "Payment initialization failed.")},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        paystack_data = response_data.get("data", {})
+        reference = paystack_data.get("reference")
+        if not reference:
+            return Response({"detail": "Paystack response did not include a payment reference."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        payment = Payment.objects.get_or_create(
+            paystack_reference=reference,
+            paystack_access_code=paystack_data.get("access_code"),
+            defaults={
+                "user": user,
+                "amount": amount_decimal,
+                "currency": paystack_data.get("currency", "NGN"),
+                "status": Payment.Status.PENDING,
+                "payment_type": payment_type,
+                "description": request.data.get("description", "Payment"),
+            }
+        )
+
+        return Response(
+            {
+                "message": "Payment initialized successfully.",
+                "payment_id": payment.id,
+                "reference": reference,
+                "authorization_url": paystack_data.get("authorization_url"),
+                "access_code": paystack_data.get("access_code"),
+            },
+            status=status.HTTP_201_CREATED,
+        )
