@@ -42,6 +42,7 @@ class Payment(models.Model):
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING, db_index=True)
     payment_type = models.CharField(max_length=32, choices=PaymentType.choices)
     paystack_reference = models.CharField(max_length=128, unique=True, db_index=True)
+    idempotency_key = models.CharField(max_length=250, unique=True)
     paystack_access_code = models.CharField(max_length=128, blank=True)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
