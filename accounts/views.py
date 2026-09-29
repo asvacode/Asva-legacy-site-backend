@@ -48,12 +48,12 @@ class RegisterView(APIView):
         )
 
 
-class ReferenceView(APIView):
+class ProfileView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
         profile = UserProfile.objects.get(user=request.user)
-        serializer = ReferenceSerializer({"reference_code": profile.reference_code})
+        serializer = ReferenceSerializer({"reference_code": profile.reference_code, "is_active": profile.is_active, "phone_number": profile.phone_number})
         return Response(serializer.data)
 
 
