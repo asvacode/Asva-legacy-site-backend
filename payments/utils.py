@@ -1,3 +1,5 @@
+from .models import Payment
+
 def translate_payment_channel(channel: str) -> str:
     payment_type_by_channel = {
                 "card": "card",
@@ -13,3 +15,14 @@ def translate_payment_channel(channel: str) -> str:
         }
 
     return payment_type_by_channel.get(channel)
+
+def translate_paystack_status(status: str)-> Payment.Status:
+    match(status):
+        case 'abandoned' | 'pending'| 'ongoing' | 'processing' | 'queued':
+            return Payment.Status.PENDING
+        case 'failed':
+            return Payment.Status.FAILED
+        case 'reversed':
+            return Payment.Status.REVERSED
+        case 'success':
+            return Payment.Status.SUCCESS
