@@ -23,9 +23,10 @@ class RegisterSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password")
         user = User(username=validated_data['username'], email=validated_data['email'])
         user.set_password(password)
-        user.is_active = False  # inactive until payment confirmed by admin
+        user.is_active = True  # inactive until payment confirmed by admin
         user.save()
 
+        # User profile is_active is set to false during sign up until payment has been completed
         UserProfile.objects.create(user=user, reference_code=generate_reference_code(), phone_number=validated_data.get("phone_number"))
 
         return user
@@ -33,6 +34,8 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class ReferenceSerializer(serializers.Serializer):
     reference_code = serializers.CharField(read_only=True)
+    is_active = serializers.BooleanField()
+    phone_number = serializers.CharField()
 
 
 class EmailOrUsernameTokenSerializer(TokenObtainPairSerializer):
