@@ -2,7 +2,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
-import requests
+import services
 from asva_backend.settings import PAYSTACK_SECRET_KEY
 from rest_framework.response import Response
 from django.contrib.auth.models import User
@@ -107,12 +107,13 @@ class InitiatePaystackPayment(APIView):
     def post(self, request, *args, **kwargs):
         email = request.data.get("email") or (request.user.email if request.user.is_authenticated else None)
         amount = request.data.get("amount")
+        idempotency_key = request.data.get("idempotency_key")
         
         # Validation....
         if not email or amount is None:
             return Response({"detail": "Email and amount are required."}, status=status.HTTP_400_BAD_REQUEST)
         
-        if not request.data.get("idempotency_key", None):
+        if not idempotency_key:
             return Response({"detail": "Idempotency Key is required"},status=status.HTTP_400_BAD_REQUEST)
         
         try:
@@ -123,87 +124,37 @@ class InitiatePaystackPayment(APIView):
         if amount_decimal <= 0:
             return Response({"detail": "Amount must be greater than zero."}, status=status.HTTP_400_BAD_REQUEST)
         
-        payment_channel = request.data.get("payment_channel")        
-                
-        payment_type = translate_payment_channel(payment_channel)
-                
-        if payment_type not in {choice[0].lower() for choice in Payment.PaymentType.choices}:
-            return Response({"detail": "Invalid payment type."}, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
             return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
         
-        # Create payment Object...
         try:
-            payment = Payment.objects.create(**{
-                "user": user,
-                "amount": amount_decimal,
-                "currency": request.data.get("currency", "NGN"),
-                "status": Payment.Status.PENDING,
-                "payment_type": payment_type,
-                "description": request.data.get("description", "Payment"),
-                "idempotency_key": request.data.get("idempotency_key")
-            })
-        except IntegrityError:
-            payment = Payment.objects.get(idempotency_key=request.data.get("idempotency_key"))
-            return Response({
-                "message": "Payment initialized successfully.",
-                "payment_id": payment.id,
-                "reference": payment.paystack_reference,
-                "access_code": payment.paystack_access_code
-            })
-        
-        
-        # Initialize Payment on paystack...
-        payload = {
-            "email": email,
-            "amount": int((amount_decimal * 100).quantize(Decimal("1"))),
-            "currency": "NGN",
-            "channel": payment_channel,
-        }
-
-        try:
-            response = requests.post(
-                "https://api.paystack.co/transaction/initialize",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
-                    "Content-Type": "application/json",
-                },
-                timeout=20,
+            payment, created = services.initialize_payment(
+                user=user,
+                email=email,
+                amount=amount_decimal,
+                currency=request.data.get("currency", "NGN"),
+                description=request.data.get("description", "Payment"),
+                idempotency_key=idempotency_key,
+                channels=Payment.PaymentType.choices
             )
-            response_data = response.json()
-        except (requests.RequestException, ValueError):
-            return Response({"detail": "Payment initialization failed."}, status=status.HTTP_502_BAD_GATEWAY)
-
-
-        if response.status_code != 200 or not response_data.get("status"):
-            payment.status = Payment.Status.FAILED
-            payment.save()
-            return Response(
-                {"detail": response_data.get("message", "Payment initialization failed.")},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-
-        paystack_data = response_data.get("data", {})
-        reference = paystack_data.get("reference")
-        if not reference:
-            return Response({"detail": "Paystack response did not include a payment reference."}, status=status.HTTP_502_BAD_GATEWAY)
-
-        # Update Payment object
-        payment.paystack_access_code = paystack_data.get("access_code")
-        payment.paystack_reference = reference
-        payment.save()
-        
-        
+        except services.PaymentError as exc:
+            return Response({"detail": exc.message}, status=exc.status_code)
+ 
         return Response(
             {
                 "message": "Payment initialized successfully.",
                 "payment_id": payment.id,
                 "reference": payment.paystack_reference,
-                "access_code": payment.paystack_access_code
+                "access_code": payment.paystack_access_code,
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
+        
+        
+class PaystackWebhooks(APIView):
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request, *args, **kwargs):
+        pass

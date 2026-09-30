@@ -30,17 +30,18 @@ class Payment(models.Model):
         CANCELLED = "CANCELLED", "Cancelled"
 
     class PaymentType(models.TextChoices):
-        CARD = "CARD", "Card"
-        BANK_TRANSFER = "BANK_TRANSFER", "Bank transfer"
-        USSD = "USSD", "USSD"
-        MOBILE_MONEY = "MOBILE_MONEY", "Mobile money"
+        CARD = "card", "Card"
+        BANK_TRANSFER = "bank_transfer", "Bank transfer"
+        USSD = "ussd", "USSD"
+        MOBILE_MONEY = "mobile_money", "Mobile money"
+        QR = "qr", "QR"
+        BANK = "bank", "BANK"
         OTHER = "OTHER", "Other"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payments")
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, default="NGN")
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING, db_index=True)
-    payment_type = models.CharField(max_length=32, choices=PaymentType.choices)
     paystack_reference = models.CharField(max_length=128, unique=True, db_index=True)
     idempotency_key = models.CharField(max_length=250, unique=True)
     paystack_access_code = models.CharField(max_length=128, blank=True)
