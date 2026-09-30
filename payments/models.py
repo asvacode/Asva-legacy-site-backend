@@ -48,12 +48,12 @@ class Payment(models.Model):
     currency = models.CharField(max_length=3, default="NGN")
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING, db_index=True)
     idempotency_key = models.CharField(max_length=250, unique=True)
-    purpose = models.CharField(max_length=32, choices=Purpose.choices)
+    purpose = models.CharField(max_length=32, choices=Purpose.choices, null=False, default=Purpose.ACCOUNT_CREATION)
     paystack_access_code = models.CharField(max_length=128, blank=True)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    paid_at = models.DateTimeField(blank=True)
+    paid_at = models.DateTimeField(blank=True, null=True)
 
     def __str__(self) -> str:
         return f"{self.paystack_reference} - {self.amount} {self.currency} ({self.status})"

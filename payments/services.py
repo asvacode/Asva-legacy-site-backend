@@ -74,7 +74,6 @@ def paystack_initialize(*, email, amount, currency, reference, channels=None):
     }
     if channels:
         payload["channels"] = channels
-    print(payload)
     return _paystack_request("POST", "/transaction/initialize", json=payload)
 
 
@@ -160,7 +159,7 @@ def verify_payment(idempotencyKey, paystack_data=None):
 
     with transaction.atomic():
         try:
-            payment = Payment.objects.select_for_update().get(idempotencyKey=idempotencyKey)
+            payment = Payment.objects.select_for_update().get(idempotency_key=idempotencyKey)
         except Payment.DoesNotExist:
             raise PaymentError("Unknown payment reference.", status_code=404)
 

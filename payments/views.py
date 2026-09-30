@@ -157,8 +157,10 @@ class InitiatePaystackPayment(APIView):
         )
 
 class VerifyPaystackPayment(APIView):
+    permission_classes = [permissions.AllowAny]
+    
     def post(self, request, *args, **kwargs):
-        data = request.data()
+        data = request.data
         idempotencyKey = data.get("idempotency_key")
         if not idempotencyKey:
             return Response({
@@ -166,11 +168,27 @@ class VerifyPaystackPayment(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            payment = Payment.objects.get(idempotencyKey=idempotencyKey)
+            payment = Payment.objects.get(idempotency_key=idempotencyKey)
         except Payment.DoesNotExist:
             return Response({
                 "message": "Payment with idempotency key does not exist"
             }, status=status.HTTP_404_NOT_FOUND)
+
+        if payment.status == Payment.Status.SUCCESS:
+            return Response({
+                "status": "success", 
+                "profile_active": True
+            }, status=status.HTTP_200_OK)
+        
+        try:
+            payment = services.verify_payment(idempotencyKey)
+        except services.PaymentError as e:
+            return Response({"detail": e.message}, status=e.status_code)
+        
+        return Response({
+            "status": payment.status
+        }, status=status.HTTP_200_OK)
+            
         
             
         
