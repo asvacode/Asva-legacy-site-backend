@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: asva_backend_dev
+    plan: free
+    runtime: python
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn asva_backend.wsgi:application"
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: NEXTJS_ORIGINS
+        value: https://asva-legacy-site-frontend.vercel.app
+      - key: DJANGO_DEBUG
+        value: false
+      - key: RENDER_EXTERNAL_HOSTNAME
+        sync: false
