@@ -7,7 +7,11 @@ from decimal import Decimal
 from accounts.models import UserProfile
 
 import requests
-from asva_backend.settings import PAYSTACK_SECRET_KEY
+from asva_backend.settings import (
+    PAYSTACK_SECRET_KEY,
+    PAYSTACK_ACCOUNT_CREATION_SUBACCOUNT,
+    PAYSTACK_DEV_CENTER_SUBACCOUNT,
+)
 from django.utils.dateparse import parse_datetime
 from django.db import IntegrityError, transaction
 from .utils import translate_paystack_status
@@ -18,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 PAYSTACK_BASE_URL = "https://api.paystack.co"
 PAYSTACK_TIMEOUT = 20
+
 
 # ---------------- Exceptions -------------------
 class PaymentError(Exception):
@@ -65,12 +70,20 @@ def _paystack_request(method, path, **kwargs):
     return body.get("data") or {}
 
 
-def paystack_initialize(*, email, amount, currency, reference, channels=None):
+def paystack_initialize(
+    *, email, amount, currency, reference, purpose: Payment.Purpose, channels=None
+):
     payload = {
         "email": email,
         "amount": to_subunit(amount),
         "currency": currency,
         "reference": reference,
+        "bearer": "subaccount",
+        "subaccount": (
+            PAYSTACK_ACCOUNT_CREATION_SUBACCOUNT
+            if purpose == Payment.Purpose.ACCOUNT_CREATION
+            else PAYSTACK_DEV_CENTER_SUBACCOUNT
+        ),
     }
     if channels:
         payload["channels"] = channels
@@ -83,14 +96,14 @@ def paystack_verify(reference: str):
 
 # ---------------- Verify Webhook Signature --------------------
 def verify_signature(raw_body: bytes, signature: str) -> bool:
-    expected = hmac.new(
-        PAYSTACK_SECRET_KEY, raw_body, hashlib.sha512
-    ).hexdigest()
+    expected = hmac.new(PAYSTACK_SECRET_KEY, raw_body, hashlib.sha512).hexdigest()
     return hmac.compare_digest(expected, signature or "")
 
 
 # ------------- Payment Creation -----------------
-def _get_or_create_payment(*, user, amount, currency, description, idempotency_key, purpose):
+def _get_or_create_payment(
+    *, user, amount, currency, description, idempotency_key, purpose
+):
     try:
         with transaction.atomic():  # savepoint, so an IntegrityError doesn't poison an outer transaction
             payment = Payment.objects.create(
@@ -100,7 +113,7 @@ def _get_or_create_payment(*, user, amount, currency, description, idempotency_k
                 status=Payment.Status.PENDING,
                 description=description,
                 idempotency_key=idempotency_key,
-                purpose=purpose
+                purpose=purpose,
             )
         return payment, True
     except IntegrityError:
@@ -111,7 +124,15 @@ def _get_or_create_payment(*, user, amount, currency, description, idempotency_k
 
 
 def initialize_payment(
-    *, user, email, amount, currency, description, idempotency_key, purpose, channels=None
+    *,
+    user,
+    email,
+    amount,
+    currency,
+    description,
+    idempotency_key,
+    purpose,
+    channels=None,
 ):
     """
     Create (or fetch) the Payment for this idempotency key and make sure it has a
@@ -124,7 +145,7 @@ def initialize_payment(
         currency=currency,
         description=description,
         idempotency_key=idempotency_key,
-        purpose=purpose
+        purpose=purpose,
     )
 
     # Already initialized on a previous call: return it as is.
@@ -137,6 +158,7 @@ def initialize_payment(
         email=email,
         amount=payment.amount,
         currency=payment.currency,
+        purpose=purpose,
         reference=idempotency_key,
         channels=channels,
     )
@@ -147,6 +169,7 @@ def initialize_payment(
     payment.paystack_access_code = data["access_code"]
     payment.save(update_fields=["paystack_access_code"])
     return payment, created
+
 
 # ----- Verify Payment --------
 def verify_payment(idempotencyKey, paystack_data=None):
@@ -159,7 +182,9 @@ def verify_payment(idempotencyKey, paystack_data=None):
 
     with transaction.atomic():
         try:
-            payment = Payment.objects.select_for_update().get(idempotency_key=idempotencyKey)
+            payment = Payment.objects.select_for_update().get(
+                idempotency_key=idempotencyKey
+            )
         except Payment.DoesNotExist:
             raise PaymentError("Unknown payment reference.", status_code=404)
 
@@ -170,7 +195,7 @@ def verify_payment(idempotencyKey, paystack_data=None):
         remote_status = paystack_data.get("status")
 
         actual_status = translate_paystack_status(remote_status)
-        if(actual_status != Payment.Status.SUCCESS):
+        if actual_status != Payment.Status.SUCCESS:
             payment.status = actual_status
             payment.save()
             return payment
@@ -193,8 +218,11 @@ def verify_payment(idempotencyKey, paystack_data=None):
         if paystack_data.get("paid_at"):
             payment.paid_at = parse_datetime(paystack_data.get("paid_at"))
         payment.save()
-        
-        if(payment.status == Payment.Status.SUCCESS and payment.purpose == Payment.Purpose.ACCOUNT_CREATION):
+
+        if (
+            payment.status == Payment.Status.SUCCESS
+            and payment.purpose == Payment.Purpose.ACCOUNT_CREATION
+        ):
             UserProfile.objects.filter(user=payment.user).update(is_active=True)
 
     return payment
