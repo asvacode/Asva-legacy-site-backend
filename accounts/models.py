@@ -13,3 +13,17 @@ class UserProfile(models.Model):
     def __str__(self) -> str:
         return f"{self.user.username} ({self.reference_code})"
 
+
+class ExistingMember(models.Model):
+    phone_number = PhoneNumberField(region="NG", unique=True)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="existing_member_record",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return str(self.phone_number)

@@ -107,4 +107,7 @@ htmlcov/
 # Ignore compiled wheel metadata directories
 pip-wheel-metadata/
 
+# Local contact / whitelist imports (PII — do not commit)
+Group Numbers.xlsx
+
 # End of .gitignore
