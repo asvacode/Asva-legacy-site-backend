@@ -1,15 +1,33 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
+from uuid import uuid4
+
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import UserProfile
-from .serializers import ReferenceSerializer, RegisterSerializer, EmailOrUsernameTokenSerializer
+from .models import ExistingMember, UserProfile
+from .serializers import (
+    EmailOrUsernameTokenSerializer,
+    ExistingMemberActivationSerializer,
+    ReferenceSerializer,
+    RegisterSerializer,
+)
+from .utils import generate_reference_code, normalize_nigerian_phone_number
 
+from payments.models import Payment
 
 User = get_user_model()
+ACTIVATION_RESPONSE = {
+    "detail": (
+        "If the membership matches our records, the account has been activated "
+        "and can be used to log in."
+    )
+}
 
 
 class AuthApiRootView(APIView):
@@ -21,6 +39,10 @@ class AuthApiRootView(APIView):
                 "detail": "ASVA auth API",
                 "endpoints": {
                     "register": {"method": "POST", "url": "/api/auth/register"},
+                    "activate_existing_member": {
+                        "method": "POST",
+                        "url": "/api/auth/activate-existing-member",
+                    },
                     "login": {"method": "POST", "url": "/api/auth/login"},
                     "logout": {"method": "POST", "url": "/api/auth/logout"},
                     "token_refresh": {"method": "POST", "url": "/api/auth/token/refresh"},
@@ -46,6 +68,99 @@ class RegisterView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class ExistingMemberActivationView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = ExistingMemberActivationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        normalized_phone = serializer.validated_data["phone_number"]
+        email = serializer.validated_data["email"]
+        password = serializer.validated_data["password"]
+
+        with transaction.atomic():
+            member = (
+                ExistingMember.objects.select_for_update()
+                .select_related("user")
+                .filter(phone_number=normalized_phone)
+                .first()
+            )
+            if member is not None:
+                user = member.user
+                if user is None:
+                    matching_profiles = list(
+                        UserProfile.objects.select_for_update()
+                        .select_related("user")
+                        .filter(phone_number=normalized_phone)[:2]
+                    )
+                    if len(matching_profiles) > 1:
+                        return Response(ACTIVATION_RESPONSE, status=status.HTTP_200_OK)
+                    profile = matching_profiles[0] if matching_profiles else None
+                    user = profile.user if profile is not None else User(
+                        username=f"member-{uuid4().hex}"
+                    )
+                else:
+                    profile = UserProfile.objects.filter(user=user).first()
+                    if profile is None:
+                        return Response(ACTIVATION_RESPONSE, status=status.HTTP_200_OK)
+
+                if profile is not None:
+                    try:
+                        profile_phone = normalize_nigerian_phone_number(
+                            profile.phone_number
+                        )
+                    except ValueError:
+                        profile_phone = ""
+                    if profile_phone != normalized_phone:
+                        return Response(ACTIVATION_RESPONSE, status=status.HTTP_200_OK)
+
+                    if profile.is_active:
+                        return Response(ACTIVATION_RESPONSE, status=status.HTTP_200_OK)
+
+                    if (
+                        user.pk is not None
+                        and Payment.objects.filter(
+                            user=user,
+                            purpose=Payment.Purpose.ACCOUNT_CREATION,
+                        )
+                        .exclude(status=Payment.Status.SUCCESS)
+                        .exists()
+                    ):
+                        return Response(ACTIVATION_RESPONSE, status=status.HTTP_200_OK)
+
+                if User.objects.filter(email__iexact=email).exclude(pk=user.pk).exists():
+                    return Response(ACTIVATION_RESPONSE, status=status.HTTP_200_OK)
+
+                try:
+                    validate_password(password, user=user)
+                except DjangoValidationError as exc:
+                    return Response(
+                        {"password": list(exc.messages)},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                user.email = email
+                user.set_password(password)
+                user.is_active = True
+                user.save()
+
+                if profile is None:
+                    profile = UserProfile.objects.create(
+                        user=user,
+                        reference_code=generate_reference_code(),
+                        phone_number=normalized_phone,
+                        is_active=True,
+                    )
+                else:
+                    profile.is_active = True
+                    profile.save(update_fields=["is_active"])
+
+                member.user = user
+                member.save(update_fields=["user"])
+
+        return Response(ACTIVATION_RESPONSE, status=status.HTTP_200_OK)
 
 
 class ProfileView(APIView):
